@@ -33,6 +33,9 @@ jobs:
         run: |
           echo "TAGS=${{ github.sha }} latest" >> $GITHUB_ENV
 
+      - name: Prefetch build artifacts
+        run: ./.s2i/get_artifacts.sh ./.s2i/artifacts.txt
+
       - name: Build image
         id: build_image
         uses: redhat-actions/buildah-build@v3
