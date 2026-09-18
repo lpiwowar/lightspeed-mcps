@@ -1,6 +1,68 @@
-name: "Build and push rhos-mcps container image"
+name: "Build and push S2I container image"
 
 on:
+  # This workflow can be invoked from another repository with:
+  # jobs:
+  #   image:
+  #     uses: openstack-k8s-operators/lightspeed-mcps/.github/workflows/build-and-push-mcps.yaml@main
+  #     secrets:
+  #       QUAY_USERNAME: ${{ secrets.QUAY_USERNAME }}
+  #       QUAY_PASSWORD: ${{ secrets.QUAY_PASSWORD }}
+  workflow_call:
+    inputs:
+      image_name:
+        description: Image name, without its registry and namespace. Defaults to the caller repository name.
+        required: false
+        type: string
+        default: ""
+      image_namespace:
+        description: Namespace in quay.io to which the image is pushed.
+        required: false
+        type: string
+        default: openstack-lightspeed
+      build_context:
+        description: Build context path.
+        required: false
+        type: string
+        default: .
+      containerfile:
+        description: Containerfile path, relative to the caller repository.
+        required: false
+        type: string
+        default: ./Containerfile
+      build_args:
+        description: Build arguments, one per line in KEY=VALUE format.
+        required: false
+        type: string
+        default: ""
+      prefetch_artifacts:
+        description: Run artifacts_script before building.
+        required: false
+        type: boolean
+        default: true
+      artifacts_file:
+        description: Artifact list to give to artifacts_script when prefetch_artifacts is true.
+        required: false
+        type: string
+        default: ./.s2i/artifacts.txt
+      artifacts_script:
+        description: Script that fetches artifacts specified by artifacts_file.
+        required: false
+        type: string
+        default: ./.s2i/get_artifacts.sh
+      tags:
+        description: Custom image tags. Defaults to '<sha> latest'.
+        required: false
+        type: string
+        default: ""
+    secrets:
+      QUAY_USERNAME:
+        description: Quay username used to publish the image.
+        required: false
+      QUAY_PASSWORD:
+        description: Quay password or robot token used to publish the image.
+        required: false
+
   workflow_dispatch: {}
 
   push:
@@ -16,7 +78,13 @@ on:
       - reopened
 
 env:
-  IMAGE_NAME: quay.io/openstack-lightspeed/${{ github.event.repository.name }}
+  IMAGE_NAME: ${{ inputs.image_name || github.event.repository.name }}
+  IMAGE_NAMESPACE: ${{ inputs.image_namespace || 'openstack-lightspeed' }}
+  BUILD_CONTEXT: ${{ inputs.build_context || '.' }}
+  CONTAINERFILE: ${{ inputs.containerfile || './Containerfile' }}
+  ARTIFACTS_SCRIPT: ${{ inputs.artifacts_script || './.s2i/get_artifacts.sh' }}
+  ARTIFACTS_FILE: ${{ inputs.artifacts_file || './.s2i/artifacts.txt' }}
+  PUSH: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}
 
 jobs:
   build-and-push:
@@ -28,27 +96,32 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Set TAGS for push builds
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+      - name: Set TAGS
         run: |
-          echo "TAGS=${{ github.sha }} latest" >> $GITHUB_ENV
+          if [ -n "${{ inputs.tags }}" ]; then
+            echo "TAGS=${{ inputs.tags }}" >> $GITHUB_ENV
+          else
+            echo "TAGS=${{ github.sha }} latest" >> $GITHUB_ENV
+          fi
 
       - name: Prefetch build artifacts
-        run: ./.s2i/get_artifacts.sh ./.s2i/artifacts.txt
+        if: ${{ toJSON(inputs.prefetch_artifacts) != 'false' }}
+        run: "${ARTIFACTS_SCRIPT} ${ARTIFACTS_FILE}"
 
       - name: Build image
         id: build_image
         uses: redhat-actions/buildah-build@v3
         with:
-          image: ${{ github.event.repository.name }}
-          tags: ${{ env.TAGS || 'pr-check' }}
+          image: ${{ env.IMAGE_NAME }}
+          tags: ${{ env.TAGS }}
           oci: true
-          context: .
+          context: ${{ env.BUILD_CONTEXT }}
+          build-args: ${{ inputs.build_args }}
           containerfiles: |
-            ./Containerfile
+            ${{ env.CONTAINERFILE }}
 
       - name: Log in to quay.io
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        if: env.PUSH == 'true'
         uses: redhat-actions/podman-login@v2
         with:
           username: ${{ secrets.QUAY_USERNAME }}
@@ -56,11 +129,11 @@ jobs:
           registry: quay.io
 
       - name: Push the image to quay.io
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        if: env.PUSH == 'true'
         uses: redhat-actions/push-to-registry@v3
         id: push
         with:
-          registry: quay.io/openstack-lightspeed
+          registry: quay.io/${{ env.IMAGE_NAMESPACE }}
           image: ${{ steps.build_image.outputs.image }}
           tags: ${{ steps.build_image.outputs.tags }}
           username: ${{ secrets.QUAY_USERNAME }}
