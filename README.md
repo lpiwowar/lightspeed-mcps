@@ -142,6 +142,25 @@ The container image is available at `quay.io/openstack-lightspeed/rhos-mcps`.
 
 We assume for the following examples that you haven't set the port in our config file or we've set it to the default `8080`.
 
+### Building the container image
+
+The `Containerfile` follows the S2I approach and the design guidelines described in
+[openstack-k8s-operators/s2i-openstack-containers](https://github.com/openstack-k8s-operators/s2i-openstack-containers/blob/main/docs/design.md).
+Because this repository is built independently, its local build workflow differs slightly from the one described
+there. To build the image locally:
+
+1. Fetch the checksum pinned artifacts listed in `.s2i/artifacts.txt`:
+
+```bash
+./.s2i/get_artifacts.sh ./.s2i/artifacts.txt
+```
+
+2. Build the image:
+
+```bash
+podman build -t lightspeed-mcps:latest .
+```
+
 ### Dynamic credentials:
 
 ```bash

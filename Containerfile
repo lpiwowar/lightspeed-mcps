@@ -1,47 +1,30 @@
 # Use this base image so everything comes from RPM packages (including OSC plugins)
-ARG BUILDER_IMAGE=quay.rdoproject.org/podified-master-centos10/openstack-openstackclient:current-tested
-ARG BASE_IMAGE=quay.rdoproject.org/podified-master-centos10/openstack-openstackclient:current-tested
+ARG BUILDER_IMAGE=registry.access.redhat.com/ubi10/ubi-minimal:latest
+ARG BASE_IMAGE=registry.access.redhat.com/ubi10/ubi-minimal:latest
+ARG S2I_FOLDER=./.s2i
 
 FROM $BUILDER_IMAGE AS builder
+ARG S2I_FOLDER
+ARG TARGETARCH=amd64
 
+COPY . /app
 WORKDIR /app
 
-# Install uv in the builder only; not needed in the final image.
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+COPY ${S2I_FOLDER}/builddeps.txt /tmp/builddeps.txt
+RUN pkgs=$(cat /tmp/builddeps.txt | grep -v '^#' | grep -v '^$' | tr '\n' ' ') && \
+    if [ -n "${pkgs}" ]; then microdnf -y install ${pkgs}; microdnf clean all; fi
 
-# Copy dependency manifests and README first (build backend needs README.md).
-# Dependency layer is reused when only application code changes.
-COPY --chown=cloud-admin:cloud-admin pyproject.toml uv.lock README.md ./
+COPY ${S2I_FOLDER}/requirements.lock /tmp/requirements.lock
+RUN pip3 wheel -r /tmp/requirements.lock --wheel-dir ./wheels && \
+    pip3 wheel --no-deps . --wheel-dir ./wheels
 
-# Using `--no-install-package` in `uv sync` for these 3 packages only prevents
-# the top level package from installing, not their dependencies, installing
-# incompatible versions of the dependencies.
-RUN echo -e '\n[tool.uv]\nexclude-dependencies = [\n    "openstackclient",\n    "python-openstackclient",\n    "stevedore"\n]' >> pyproject.toml
-
-# This should be safe because uv’s resolver is highly conservative and should
-# keep every existing package pinned to its current locked version.
-# Checked this with `uv lock --dry-run`
-RUN uv lock
-
-# Create the virtual environment enabling system's site-packages (RPM packages
-# from base container) since `uv sync` doesn't support it.
-RUN uv venv --system-site-packages /app/.venv
-
-# Install dependencies but without the packages that come from the base image
-RUN uv sync --frozen --no-dev --no-editable --no-install-project
-
-# Copy application code and install the package into the venv.
-COPY src/ src/
-RUN uv sync --frozen --no-dev --no-editable
-
-RUN curl -o oc.tar.gz https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable-4.18/openshift-client-linux.tar.gz && \
-    tar xvf oc.tar.gz oc && \
+COPY openshift-client-linux-${TARGETARCH}.tar.gz oc.tar.gz
+RUN tar xvf oc.tar.gz oc && \
     chmod +x oc && \
     rm oc.tar.gz
 
-# Final stage: smaller image without uv or build tools.
 FROM $BASE_IMAGE
-
+ARG S2I_FOLDER
 LABEL com.redhat.component="rhos-ls-mcps" \
       name="openstack-lightspeed/rhos-mcps" \
       summary="MCP server providing OpenStack tools for RHOS-Lightspeed" \
@@ -52,14 +35,18 @@ LABEL com.redhat.component="rhos-ls-mcps" \
 
 WORKDIR /app
 
-# Copy the virtualenv (includes the installed package with --no-editable) and README.
-COPY --from=builder /app/.venv /app/.venv
+COPY --from=builder /app/wheels /app/wheels
 COPY --from=builder /app/oc /usr/local/bin
 
-ENV PATH="/app/.venv/bin:$PATH"
+COPY ${S2I_FOLDER}/bindeps.txt /tmp/bindeps.txt
+RUN pkgs=$(cat /tmp/bindeps.txt | grep -v '^#' | grep -v '^$' | tr '\n' ' ') && \
+    if [ -n "${pkgs}" ]; then microdnf -y install ${pkgs} && microdnf clean all && rm -rf /var/cache/dnf; fi && \
+    rm /tmp/bindeps.txt
+
+RUN pip3 install --no-cache-dir --prefix=/usr /app/wheels/*.whl && \
+    rm -rf /app/wheels
 
 EXPOSE 8080
-
 USER 1001
 
 ENTRYPOINT ["rhos-ls-mcps", "--ip", "0.0.0.0"]

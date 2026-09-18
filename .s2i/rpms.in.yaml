@@ -1,0 +1,33 @@
+contentOrigin:
+  repos:
+    - repoid: centos10-baseos
+      name: CentOS Stream 10 - BaseOS
+      baseurl: http://mirror.stream.centos.org/10-stream/BaseOS/$basearch/os/
+      enabled: true
+      gpgcheck: false
+
+    - repoid: centos10-appstream
+      name: CentOS Stream 10 - AppStream
+      baseurl: http://mirror.stream.centos.org/10-stream/AppStream/$basearch/os/
+      enabled: true
+      gpgcheck: false
+
+    - repoid: centos10-crb
+      name: CentOS Stream 10 - CRB
+      baseurl: http://mirror.stream.centos.org/10-stream/CRB/$basearch/os/
+      enabled: true
+      gpgcheck: false
+
+context:
+  bare: true
+
+arches:
+  - x86_64
+  - aarch64
+
+packages:
+  - python3-devel
+  - python3-pip
+  - python3-wheel
+  - tar
+  - gcc
